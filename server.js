@@ -7,20 +7,43 @@ const crypto = require("crypto");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
+
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static("public"));
 
 const rooms = new Map();
+
 const ACTIONS = new Set([
-  "charge", "guard", "pa", "e", "blink", "blinkpa", "genki"
+  "charge", "guard", "pa", "e",
+  "blink", "blinkpa", "genki"
 ]);
+
+// 콜백 및 데이터 인자 안전 처리
+function normalizeArgs(data, cb) {
+  if (typeof data === "function") {
+    return { data: {}, cb: data };
+  }
+
+  return {
+    data: data && typeof data === "object" ? data : {},
+    cb
+  };
+}
+
+function reply(cb, result) {
+  if (typeof cb === "function") {
+    cb(result);
+  }
+}
 
 function makeCode() {
   let id;
+
   do {
     id = crypto.randomBytes(3).toString("hex").toUpperCase();
   } while (rooms.has(id));
+
   return id;
 }
 
@@ -59,6 +82,7 @@ function makeRoom(host) {
   );
 
   rooms.set(room.code, room);
+
   return room;
 }
 
@@ -75,8 +99,11 @@ function addBot(room) {
 
 function findRoom(socket) {
   for (const room of rooms.values()) {
-    if (room.players.has(socket.id)) return room;
+    if (room.players.has(socket.id)) {
+      return room;
+    }
   }
+
   return null;
 }
 
@@ -87,6 +114,7 @@ function publicRoom(room) {
     phase: room.phase,
     round: room.round,
     solo: room.solo,
+
     players: [...room.players.values()].map(p => ({
       id: p.id,
       name: p.name,
@@ -97,9 +125,11 @@ function publicRoom(room) {
       spectator: p.spectator,
       isBot: !!p.isBot
     })),
+
     choices: ["reveal", "finished"].includes(room.phase)
       ? room.lastSummary
       : null,
+
     winnerId: room.winnerId
   };
 }
@@ -110,6 +140,7 @@ function emitRoom(room) {
 
 function targetValid(room, actor, targetId) {
   const target = room.players.get(targetId);
+
   return !!target &&
     target.id !== actor.id &&
     target.alive &&
@@ -142,9 +173,15 @@ function botChoose(room, bot, human) {
   } else if (r < 0.65) {
     bot.choice = { action: "guard" };
   } else if (bot.ki >= 3 && r < 0.82) {
-    bot.choice = { action: "e", targetId: human.id };
+    bot.choice = {
+      action: "e",
+      targetId: human.id
+    };
   } else {
-    bot.choice = { action: "pa", targetId: human.id };
+    bot.choice = {
+      action: "pa",
+      targetId: human.id
+    };
   }
 }
 
@@ -163,7 +200,9 @@ function resolveRound(room) {
     const caster = genkiUsers[0];
 
     for (const p of alive) {
-      if (p.id !== caster.id) p.alive = false;
+      if (p.id !== caster.id) {
+        p.alive = false;
+      }
     }
 
     room.winnerId = caster.id;
@@ -180,7 +219,10 @@ function resolveRound(room) {
   }
 
   const actions = new Map(
-    alive.map(p => [p.id, p.choice?.action || "guard"])
+    alive.map(p => [
+      p.id,
+      p.choice?.action || "guard"
+    ])
   );
 
   const targeted = new Map(
@@ -231,12 +273,16 @@ function resolveRound(room) {
         survives = own !== "blink";
       }
 
-      if (!survives) out.add(p.id);
+      if (!survives) {
+        out.add(p.id);
+      }
     }
   }
 
   for (const p of alive) {
-    if (out.has(p.id)) p.alive = false;
+    if (out.has(p.id)) {
+      p.alive = false;
+    }
 
     const action = actions.get(p.id);
 
@@ -272,7 +318,9 @@ function resolveRound(room) {
 io.on("connection", socket => {
 
   // 일반 방 생성
-  socket.on("room:create", (data = {}, cb = () => {}) => {
+  socket.on("room:create", (rawData, rawCb) => {
+    const { data, cb } = normalizeArgs(rawData, rawCb);
+
     const room = makeRoom({
       id: socket.id,
       name: cleanName(data.name),
@@ -281,12 +329,19 @@ io.on("connection", socket => {
 
     socket.join(room.code);
 
-    cb({ ok: true, code: room.code, id: socket.id });
+    reply(cb, {
+      ok: true,
+      code: room.code,
+      id: socket.id
+    });
+
     emitRoom(room);
   });
 
   // BOT 방 생성
-  socket.on("room:createSolo", (data = {}, cb = () => {}) => {
+  socket.on("room:createSolo", (rawData, rawCb) => {
+    const { data, cb } = normalizeArgs(rawData, rawCb);
+
     const room = makeRoom({
       id: socket.id,
       name: cleanName(data.name),
@@ -296,22 +351,32 @@ io.on("connection", socket => {
     addBot(room);
     socket.join(room.code);
 
-    cb({ ok: true, code: room.code, id: socket.id });
+    reply(cb, {
+      ok: true,
+      code: room.code,
+      id: socket.id
+    });
+
     emitRoom(room);
   });
 
   // 방 입장
-  socket.on("room:join", (data = {}, cb = () => {}) => {
+  socket.on("room:join", (rawData, rawCb) => {
+    const { data, cb } = normalizeArgs(rawData, rawCb);
+
     const room = rooms.get(
       String(data.code || "").trim().toUpperCase()
     );
 
     if (!room) {
-      return cb({ ok: false, error: "방을 찾을 수 없습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "방을 찾을 수 없습니다."
+      });
     }
 
     if (room.phase !== "lobby" && !data.spectator) {
-      return cb({
+      return reply(cb, {
         ok: false,
         error: "게임이 진행 중입니다."
       });
@@ -328,16 +393,25 @@ io.on("connection", socket => {
 
     socket.join(room.code);
 
-    cb({ ok: true, code: room.code, id: socket.id });
+    reply(cb, {
+      ok: true,
+      code: room.code,
+      id: socket.id
+    });
+
     emitRoom(room);
   });
 
   // 게임 시작
-  socket.on("game:start", cb => {
+  socket.on("game:start", (rawData, rawCb) => {
+    const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
 
     if (!room || room.hostId !== socket.id) {
-      return cb?.({ ok: false, error: "호스트만 시작할 수 있습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "호스트만 시작할 수 있습니다."
+      });
     }
 
     const players = [...room.players.values()].filter(
@@ -345,12 +419,16 @@ io.on("connection", socket => {
     );
 
     if (players.length < 2) {
-      return cb?.({ ok: false, error: "최소 2명이 필요합니다." });
+      return reply(cb, {
+        ok: false,
+        error: "최소 2명이 필요합니다."
+      });
     }
 
     room.phase = "playing";
     room.round = 1;
     room.winnerId = null;
+    room.lastSummary = null;
 
     for (const p of players) {
       p.ki = 1;
@@ -358,38 +436,57 @@ io.on("connection", socket => {
       p.choice = null;
     }
 
-    cb?.({ ok: true });
+    reply(cb, { ok: true });
     emitRoom(room);
   });
 
   // 기술 선택
-  socket.on("game:choose", (data = {}, cb = () => {}) => {
+  socket.on("game:choose", (rawData, rawCb) => {
+    const { data, cb } = normalizeArgs(rawData, rawCb);
+
     const room = findRoom(socket);
     const p = room?.players.get(socket.id);
     const action = data.action;
 
     if (!room || room.phase !== "playing" || !p || !p.alive) {
-      return cb({ ok: false, error: "현재 선택할 수 없습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "현재 선택할 수 없습니다."
+      });
     }
 
     if (!ACTIONS.has(action)) {
-      return cb({ ok: false, error: "잘못된 기술입니다." });
+      return reply(cb, {
+        ok: false,
+        error: "잘못된 기술입니다."
+      });
     }
 
     const costs = {
-      charge: 0, guard: 0, pa: 1,
-      e: 3, blink: 1, blinkpa: 2, genki: 5
+      charge: 0,
+      guard: 0,
+      pa: 1,
+      e: 3,
+      blink: 1,
+      blinkpa: 2,
+      genki: 5
     };
 
     if (p.ki < costs[action]) {
-      return cb({ ok: false, error: "기력이 부족합니다." });
+      return reply(cb, {
+        ok: false,
+        error: "기력이 부족합니다."
+      });
     }
 
     if (
       ["pa", "e", "blinkpa"].includes(action) &&
       !targetValid(room, p, data.targetId)
     ) {
-      return cb({ ok: false, error: "공격 대상을 선택하세요." });
+      return reply(cb, {
+        ok: false,
+        error: "공격 대상을 선택하세요."
+      });
     }
 
     p.choice = {
@@ -408,7 +505,7 @@ io.on("connection", socket => {
       }
     }
 
-    cb({ ok: true });
+    reply(cb, { ok: true });
     emitRoom(room);
 
     const active = [...room.players.values()].filter(
@@ -421,7 +518,8 @@ io.on("connection", socket => {
   });
 
   // 결과 공개
-  socket.on("game:reveal", cb => {
+  socket.on("game:reveal", (rawData, rawCb) => {
+    const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
 
     if (
@@ -429,7 +527,10 @@ io.on("connection", socket => {
       room.hostId !== socket.id ||
       room.phase !== "playing"
     ) {
-      return cb({ ok: false, error: "결과 공개 권한이 없습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "결과 공개 권한이 없습니다."
+      });
     }
 
     const active = [...room.players.values()].filter(
@@ -437,7 +538,7 @@ io.on("connection", socket => {
     );
 
     if (active.some(p => !p.choice)) {
-      return cb({
+      return reply(cb, {
         ok: false,
         error: "아직 선택하지 않은 플레이어가 있습니다."
       });
@@ -445,34 +546,44 @@ io.on("connection", socket => {
 
     resolveRound(room);
 
-    cb({ ok: true });
+    reply(cb, { ok: true });
     emitRoom(room);
   });
 
   // 다음 라운드
-  socket.on("game:next", cb => {
+  socket.on("game:next", (rawData, rawCb) => {
+    const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
 
     if (!room || room.hostId !== socket.id || room.phase !== "reveal") {
-      return cb({ ok: false, error: "다음 라운드로 진행할 수 없습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "다음 라운드로 진행할 수 없습니다."
+      });
     }
 
     room.round++;
     room.phase = "playing";
     room.lastSummary = null;
 
-    for (const p of room.players.values()) p.choice = null;
+    for (const p of room.players.values()) {
+      p.choice = null;
+    }
 
-    cb({ ok: true });
+    reply(cb, { ok: true });
     emitRoom(room);
   });
 
   // 재시작
-  socket.on("game:restart", cb => {
+  socket.on("game:restart", (rawData, rawCb) => {
+    const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
 
     if (!room || room.hostId !== socket.id) {
-      return cb({ ok: false, error: "호스트만 재시작할 수 있습니다." });
+      return reply(cb, {
+        ok: false,
+        error: "호스트만 재시작할 수 있습니다."
+      });
     }
 
     room.phase = "lobby";
@@ -487,18 +598,20 @@ io.on("connection", socket => {
       p.spectator = false;
     }
 
-    cb({ ok: true });
+    reply(cb, { ok: true });
     emitRoom(room);
   });
 
   // 실시간 채팅
-  socket.on("chat:send", (data = {}, cb = () => {}) => {
+  socket.on("chat:send", (rawData, rawCb) => {
+    const { data, cb } = normalizeArgs(rawData, rawCb);
+
     const room = findRoom(socket);
     const p = room?.players.get(socket.id);
     const message = String(data.message || "").trim().slice(0, 240);
 
     if (!room || !p || !message) {
-      return cb({
+      return reply(cb, {
         ok: false,
         error: "방 연결 또는 메시지를 확인해 주세요."
       });
@@ -511,18 +624,22 @@ io.on("connection", socket => {
       time: new Date().toISOString()
     });
 
-    cb({ ok: true });
+    reply(cb, { ok: true });
   });
 
   // 연결 종료
   socket.on("disconnect", () => {
     const room = findRoom(socket);
+
     if (!room) return;
 
     room.players.delete(socket.id);
 
     if (room.hostId === socket.id) {
-      const next = [...room.players.values()].find(p => !p.isBot);
+      const next = [...room.players.values()].find(
+        p => !p.isBot
+      );
+
       room.hostId = next?.id || null;
     }
 
@@ -534,6 +651,6 @@ io.on("connection", socket => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   console.log(`어윤호의 드래곤볼 running on ${PORT}`);
 });
