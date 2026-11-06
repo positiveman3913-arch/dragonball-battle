@@ -256,6 +256,7 @@ function render() {
   $("lobbyActions").classList.toggle("hidden", room.phase !== "lobby");
   $("start").classList.toggle("hidden", !host);
   $("battle").classList.toggle("hidden", room.phase !== "playing");
+
   $("revealPanel").classList.toggle(
     "hidden",
     !["reveal", "finished"].includes(room.phase)
@@ -300,23 +301,28 @@ function render() {
 
     if (room.phase === "finished") {
       const winner = room.players.find(p => p.id === room.winnerId);
+
       const div = document.createElement("div");
       div.className = "winner";
       div.textContent = winner
         ? `🏆 최종 승리: ${winner.name}`
         : "무승부";
+
       $("resultLines").prepend(div);
     }
 
     $("next").classList.toggle("hidden", !host || room.phase !== "reveal");
-    $("restart").classList.toggle("hidden", !host || room.phase !== "finished");
+
+    $("restart").classList.toggle(
+      "hidden",
+      !host || room.phase !== "finished"
+    );
   }
 }
 
-
 // ==========================================
-// DRAGON BALL ORIGINAL GAME BGM
-// Web Audio API - No external audio file
+// DRAGON BALL BGM
+// Web Audio API - NO EXTERNAL FILE
 // ==========================================
 
 (() => {
@@ -324,398 +330,317 @@ function render() {
   if (window.__gameBgmInstalled) return;
   window.__gameBgmInstalled = true;
 
-  const AudioContextClass =
+  const AudioClass =
     window.AudioContext || window.webkitAudioContext;
 
-  if (!AudioContextClass) {
-    console.warn("Web Audio API is not supported.");
+  if (!AudioClass) {
+    console.error("이 브라우저는 Web Audio API를 지원하지 않습니다.");
     return;
   }
 
-  const BPM = 128;
-  const BEAT = 60 / BPM;
-
-  // 16 steps per 4-beat bar
-  const STEP = BEAT / 4;
-  const BAR = BEAT * 4;
-
-  let ctx = null;
+  let audio = null;
   let master = null;
+  let timer = null;
   let playing = false;
-  let nextStepTime = 0;
-  let stepIndex = 0;
-  let scheduler = null;
+  let step = 0;
+  let nextTime = 0;
 
-  const initialVolume = 0.30;
+  const BPM = 120;
+  const BEAT = 60 / BPM;
+  const STEP = BEAT / 2;
 
-  // G - D - Em - C progression
-  const chords = [
-    [55, 59, 62, 67],
-    [50, 54, 57, 62],
-    [52, 55, 59, 64],
-    [48, 52, 55, 60]
-  ];
-
-  // Original bright anime-opening style melody
+  // Original melody
   const melody = [
-    79, 81, 83, 86, 83, 81, 79, 74,
-    76, 79, 81, 83, 81, 79, 76, 74,
+    67, 71, 74, 79, 76, 74, 71, 67,
+    69, 72, 76, 81, 79, 76, 72, 69,
+    71, 74, 79, 83, 81, 79, 74, 71,
+    72, 76, 79, 84, 83, 79, 76, 72,
 
-    78, 81, 86, 85, 83, 81, 78, 74,
-    76, 78, 81, 83, 86, 83, 81, 79,
-
-    83, 86, 88, 86, 83, 81, 79, 76,
-    79, 81, 83, 86, 88, 86, 83, 81,
-
-    79, 83, 86, 88, 86, 83, 81, 79,
-    76, 79, 81, 83, 81, 79, 76, 74
+    74, 79, 83, 86, 83, 79, 74, 71,
+    72, 76, 81, 84, 81, 76, 72, 69,
+    71, 74, 79, 83, 86, 83, 79, 74,
+    67, 71, 74, 79, 76, 74, 71, 67
   ];
 
-  function midiToFreq(note) {
+  const bass = [43, 38, 40, 36];
+
+  const chords = [
+    [55, 59, 62],
+    [50, 54, 57],
+    [52, 55, 59],
+    [48, 52, 55]
+  ];
+
+  function initAudio() {
+    if (audio) return;
+
+    audio = new AudioClass();
+
+    master = audio.createGain();
+    master.gain.value = 0.45;
+    master.connect(audio.destination);
+  }
+
+  function frequency(note) {
     return 440 * Math.pow(2, (note - 69) / 12);
   }
 
-  // Initialize audio
-  function setupAudio() {
-    if (ctx) return;
-
-    ctx = new AudioContextClass();
-
-    master = ctx.createGain();
-    master.gain.value = initialVolume;
-    master.connect(ctx.destination);
-  }
-
-  // Synthesizer tone
-  function tone(freq, time, duration, type, gain, detune = 0) {
-
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
+  function playNote(note, time, duration, type, volume) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
 
     osc.type = type;
-    osc.frequency.setValueAtTime(freq, time);
-    osc.detune.value = detune;
+    osc.frequency.setValueAtTime(frequency(note), time);
 
-    amp.gain.setValueAtTime(0.001, time);
-    amp.gain.linearRampToValueAtTime(gain, time + 0.015);
-
-    amp.gain.exponentialRampToValueAtTime(
+    gain.gain.setValueAtTime(0.001, time);
+    gain.gain.linearRampToValueAtTime(volume, time + 0.02);
+    gain.gain.exponentialRampToValueAtTime(
       0.001,
       time + duration
     );
 
-    osc.connect(amp);
-    amp.connect(master);
+    osc.connect(gain);
+    gain.connect(master);
 
     osc.start(time);
     osc.stop(time + duration + 0.03);
   }
 
-  // Kick drum
   function kick(time) {
-
-    const osc = ctx.createOscillator();
-    const amp = ctx.createGain();
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
 
     osc.type = "sine";
+    osc.frequency.setValueAtTime(140, time);
+    osc.frequency.exponentialRampToValueAtTime(40, time + 0.15);
 
-    osc.frequency.setValueAtTime(130, time);
-    osc.frequency.exponentialRampToValueAtTime(42, time + 0.13);
+    gain.gain.setValueAtTime(0.65, time);
+    gain.gain.exponentialRampToValueAtTime(
+      0.001,
+      time + 0.18
+    );
 
-    amp.gain.setValueAtTime(0.65, time);
-    amp.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
-
-    osc.connect(amp);
-    amp.connect(master);
+    osc.connect(gain);
+    gain.connect(master);
 
     osc.start(time);
-    osc.stop(time + 0.18);
+    osc.stop(time + 0.2);
   }
 
-  // Noise percussion
-  function noise(time, duration, gain) {
-
-    const length = Math.floor(ctx.sampleRate * duration);
-    const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+  function percussion(time, duration, volume) {
+    const length = Math.floor(audio.sampleRate * duration);
+    const buffer = audio.createBuffer(1, length, audio.sampleRate);
     const data = buffer.getChannelData(0);
 
     for (let i = 0; i < length; i++) {
       data[i] = Math.random() * 2 - 1;
     }
 
-    const source = ctx.createBufferSource();
-    const filter = ctx.createBiquadFilter();
-    const amp = ctx.createGain();
+    const source = audio.createBufferSource();
+    const filter = audio.createBiquadFilter();
+    const gain = audio.createGain();
 
     source.buffer = buffer;
-
     filter.type = "highpass";
-    filter.frequency.value = 4500;
+    filter.frequency.value = 3000;
 
-    amp.gain.setValueAtTime(gain, time);
-
-    amp.gain.exponentialRampToValueAtTime(
+    gain.gain.setValueAtTime(volume, time);
+    gain.gain.exponentialRampToValueAtTime(
       0.001,
       time + duration
     );
 
     source.connect(filter);
-    filter.connect(amp);
-    amp.connect(master);
+    filter.connect(gain);
+    gain.connect(master);
 
     source.start(time);
     source.stop(time + duration);
   }
 
-  // Play one 16th-note step
-  function playStep(index, time) {
+  function playStep() {
+    const position = step % 16;
+    const bar = Math.floor(step / 16) % 4;
 
-    const stepInBar = index % 16;
-    const bar = Math.floor(index / 16) % 4;
-    const chord = chords[bar];
-
-    // Drums: kick and snare
-    if (stepInBar === 0 || stepInBar === 8) {
-      kick(time);
+    // Kick
+    if (position === 0 || position === 8) {
+      kick(nextTime);
     }
 
-    if (stepInBar === 4 || stepInBar === 12) {
-      noise(time, 0.16, 0.20);
+    // Snare
+    if (position === 4 || position === 12) {
+      percussion(nextTime, 0.15, 0.20);
     }
 
     // Hi-hat
-    if (stepInBar % 2 === 0) {
-      noise(time, 0.045, 0.055);
+    if (position % 2 === 0) {
+      percussion(nextTime, 0.045, 0.07);
     }
 
     // Bass
-    if (stepInBar % 2 === 0) {
-      const bassNote = chord[0] - 24;
-
-      tone(
-        midiToFreq(bassNote),
-        time,
-        0.19,
+    if (position % 2 === 0) {
+      playNote(
+        bass[bar],
+        nextTime,
+        0.22,
         "triangle",
-        0.20
+        0.25
       );
     }
-
-    // Arpeggio
-    const arpIndex = Math.floor(stepInBar / 2) % 4;
-    const arpNote = chord[arpIndex] + 12;
-
-    tone(
-      midiToFreq(arpNote),
-      time,
-      0.17,
-      "sawtooth",
-      0.045,
-      4
-    );
 
     // Lead melody
-    const note = melody[index % melody.length];
-
-    if (stepInBar % 2 === 0) {
-      tone(
-        midiToFreq(note),
-        time,
+    if (position % 2 === 0) {
+      playNote(
+        melody[step % melody.length],
+        nextTime,
         0.30,
-        "square",
-        0.045
+        "sawtooth",
+        0.14
       );
     }
 
-    // Chord pad
-    if (stepInBar === 0) {
-
-      chord.forEach(n => {
-        tone(
-          midiToFreq(n + 12),
-          time,
-          BAR * 0.85,
+    // Chords
+    if (position === 0) {
+      chords[bar].forEach(note => {
+        playNote(
+          note + 12,
+          nextTime,
+          BEAT * 3,
           "triangle",
-          0.035
+          0.06
         );
       });
     }
+
+    step++;
+    nextTime += STEP;
   }
 
-  // Schedule audio ahead of time
-  function schedulerTick() {
+  function schedule() {
+    if (!playing || !audio) return;
 
-    if (!ctx || !playing) return;
-
-    const horizon = ctx.currentTime + 0.15;
-
-    while (nextStepTime < horizon) {
-
-      playStep(stepIndex, nextStepTime);
-
-      nextStepTime += STEP;
-      stepIndex++;
+    while (nextTime < audio.currentTime + 0.15) {
+      playStep();
     }
   }
 
-  // Start music
   async function startMusic() {
+    initAudio();
 
-    setupAudio();
-
-    if (ctx.state === "suspended") {
-      await ctx.resume();
+    if (audio.state !== "running") {
+      await audio.resume();
     }
 
     if (playing) return;
 
     playing = true;
-    nextStepTime = ctx.currentTime + 0.05;
+    nextTime = audio.currentTime + 0.05;
 
-    scheduler = setInterval(schedulerTick, 25);
+    timer = setInterval(schedule, 25);
 
     updateButton();
   }
 
-  // Stop music
   function stopMusic() {
-
     playing = false;
 
-    if (scheduler) {
-      clearInterval(scheduler);
-      scheduler = null;
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
     }
 
     updateButton();
   }
 
-  // Update button text
   function updateButton() {
+    const button = document.getElementById("bgmToggle");
 
-    const btn = document.getElementById("bgmToggle");
-
-    if (btn) {
-      btn.textContent = playing
+    if (button) {
+      button.textContent = playing
         ? "⏸ 음악 끄기"
         : "▶ 음악 켜기";
     }
   }
 
-  // Create music controls
   function createControls() {
-
     if (document.getElementById("bgmControl")) return;
 
     const panel = document.createElement("div");
-
     panel.id = "bgmControl";
 
+    panel.style.cssText = `
+      position:fixed;
+      right:16px;
+      bottom:16px;
+      z-index:999999;
+      display:flex;
+      align-items:center;
+      gap:10px;
+      padding:10px 14px;
+      border:1px solid rgba(255,210,90,.7);
+      border-radius:30px;
+      background:rgba(8,15,39,.95);
+      box-shadow:0 4px 20px rgba(0,0,0,.35);
+    `;
+
     panel.innerHTML = `
-      <button id="bgmToggle" type="button">
+      <button id="bgmToggle" type="button"
+        style="
+          border:0;
+          border-radius:20px;
+          padding:9px 14px;
+          background:#ffc45d;
+          color:#151515;
+          font-weight:bold;
+          cursor:pointer;
+        ">
         ▶ 음악 켜기
       </button>
 
-      <input
-        id="bgmVolume"
+      <input id="bgmVolume"
         type="range"
         min="0"
         max="1"
         step="0.05"
-        value="0.30"
-        aria-label="음악 음량"
-      >
+        value="0.45"
+        aria-label="배경음악 음량"
+        style="width:85px;accent-color:#ffc45d;">
     `;
-
-    Object.assign(panel.style, {
-      position: "fixed",
-      right: "16px",
-      bottom: "16px",
-      zIndex: "99999",
-      display: "flex",
-      alignItems: "center",
-      gap: "10px",
-      padding: "10px 14px",
-      borderRadius: "30px",
-      background: "rgba(8,15,39,0.92)",
-      border: "1px solid rgba(255,210,90,0.7)",
-      boxShadow: "0 4px 20px rgba(0,0,0,0.35)"
-    });
 
     document.body.appendChild(panel);
 
-    const btn = document.getElementById("bgmToggle");
+    const button = document.getElementById("bgmToggle");
     const slider = document.getElementById("bgmVolume");
 
-    btn.style.cssText =
-      "border:0;border-radius:20px;padding:8px 12px;" +
-      "background:#ffc45d;color:#151515;" +
-      "font-weight:bold;cursor:pointer;";
-
-    slider.style.accentColor = "#ffc45d";
-    slider.style.width = "85px";
-
-    // Play / pause
-    btn.addEventListener("click", async () => {
-
-      if (playing) {
-        stopMusic();
-      } else {
-        await startMusic();
+    button.addEventListener("click", async () => {
+      try {
+        if (playing) {
+          stopMusic();
+        } else {
+          await startMusic();
+        }
+      } catch (error) {
+        console.error("BGM 재생 오류:", error);
+        alert("음악 재생 실패: " + error.message);
       }
-
     });
 
-    // Volume control
     slider.addEventListener("input", () => {
-
-      setupAudio();
+      initAudio();
 
       master.gain.setTargetAtTime(
         Number(slider.value),
-        ctx.currentTime,
+        audio.currentTime,
         0.05
       );
-
-      if (Number(slider.value) > 0 && !playing) {
-        startMusic();
-      }
-
-      if (Number(slider.value) === 0 && playing) {
-        stopMusic();
-      }
-
     });
   }
 
-  // Create controls after page load
+  // Controls are created after the DOM is ready.
   if (document.readyState === "loading") {
-
-    document.addEventListener(
-      "DOMContentLoaded",
-      createControls
-    );
-
+    document.addEventListener("DOMContentLoaded", createControls);
   } else {
-
     createControls();
-
   }
-
-  // Start after first user interaction
-  // Required by browser autoplay policy
-  const unlock = async () => {
-
-    if (!playing) {
-      await startMusic();
-    }
-
-    document.removeEventListener("pointerdown", unlock);
-    document.removeEventListener("keydown", unlock);
-
-  };
-
-  document.addEventListener("pointerdown", unlock);
-  document.addEventListener("keydown", unlock);
 
 })();
