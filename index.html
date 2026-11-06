@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>드래곤볼 기 모으기 배틀</title><link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<div class="shell">
+  <header><div class="brand">氣 <span>드래곤볼 배틀</span></div><div id="connection" class="pill">연결 중</div></header>
+  <main>
+    <section id="entry" class="panel">
+      <h1>아·막·파! 기 모으기 배틀</h1>
+      <p class="muted">친구들과 각자 휴대폰으로 즐기는 실시간 대전</p>
+      <div class="field"><label>닉네임</label><input id="name" maxlength="10" placeholder="예: 번개주먹" value="전사"></div>
+      <div class="field"><label>캐릭터</label><select id="character"><option>손오공</option><option>베지터</option><option>손오반</option><option>피콜로</option><option>프리저</option><option>트랭크스</option></select></div>
+      <button id="create" class="primary">새 방 만들기</button>
+      <div class="or">또는 방 코드로 입장</div>
+      <div class="join"><input id="roomCode" maxlength="6" placeholder="방 코드"><button id="join">입장</button></div>
+      <p class="hint">게임이 시작된 방에는 관전자로 입장할 수 있습니다.</p>
+    </section>
+
+    <section id="game" class="hidden">
+      <div class="roombar panel"><div><span class="muted">방 코드</span><strong id="roomCodeLabel">------</strong></div><button id="copy">초대 코드 복사</button></div>
+      <div class="columns">
+        <div class="maincol">
+          <section class="panel">
+            <div class="sectionhead"><h2 id="phaseTitle">대기실</h2><span id="roundLabel" class="pill">LOBBY</span></div>
+            <div id="players" class="players"></div>
+            <div id="lobbyActions"><button id="start" class="primary">드래곤볼 게임 시작</button></div>
+            <div id="battle" class="hidden">
+              <div class="myki"><span>내 기력</span><strong id="kiValue">1 / 5</strong></div>
+              <div class="ki-track"><div id="kiBar"></div></div>
+              <p id="status" class="muted">기술을 선택하세요.</p>
+              <div class="actions">
+                <button data-action="charge">🔆 아 <small>기 +1</small></button>
+                <button data-action="guard">🛡️ 막 <small>방어</small></button>
+                <button data-action="pa">💥 파 <small>기 1</small></button>
+                <button data-action="e">🔥 에 <small>기 3</small></button>
+                <button data-action="blink">💨 순 <small>기 1</small></button>
+                <button data-action="blinkpa">🌀 순파 <small>기 2</small></button>
+                <button data-action="genki" id="genkiButton" class="genki" disabled>☄️ 원기옥 <small>기 5 · 전원 즉사</small></button>
+              </div>
+              <div id="targetWrap" class="field hidden"><label>공격 대상</label><select id="target"></select></div>
+              <div class="selection"><span id="selectionText">선택하지 않음</span><button id="cancelChoice" class="secondary">선택 취소</button></div>
+              <div id="hostControls" class="host-controls hidden"><button id="reveal" class="primary">결과 확인</button><button id="force" class="secondary">강제 진행</button></div>
+            </div>
+            <div id="revealPanel" class="hidden">
+              <h3>라운드 결과</h3><div id="resultLines" class="result-lines"></div>
+              <button id="next" class="primary">다음 라운드</button>
+              <button id="restart" class="secondary hidden">새 게임 시작</button>
+            </div>
+          </section>
+          <section class="panel rules"><h3>기술 규칙</h3><p>모두 기 1개로 시작합니다. 매 라운드 동시에 기술을 선택하고, 호스트가 결과를 공개합니다. '아'로 모은 기는 판정 후 추가됩니다.</p><div class="rulegrid"><span>아</span><span>기 +1 · 공격받으면 아웃</span><span>막</span><span>파 방어</span><span>파</span><span>기 1 · 대상 1명 공격</span><span>에</span><span>기 3 · 막과 파 관통</span><span>순</span><span>기 1 · 파와 에 회피</span><span>순파</span><span>기 2 · 순을 쓴 대상만 아웃</span><span class="gold">원기옥</span><span class="gold">기 5 · 모든 상대 즉시 아웃</span></div></section>
+        </div>
+        <aside class="panel chat">
+          <div class="sectionhead"><h2>실시간 채팅</h2><span class="pill">ROOM CHAT</span></div>
+          <div id="messages" class="messages"><div class="empty">채팅을 시작해 보세요!</div></div>
+          <form id="chatForm"><input id="chatInput" maxlength="240" placeholder="메시지 입력..." autocomplete="off"><button class="primary">전송</button></form>
+        </aside>
+      </div>
+    </section>
+  </main>
+  <footer>친구들과 즐기는 기 모으기 배틀 · 테스트용 리메이크</footer>
+</div>
+<script src="/socket.io/socket.io.js"></script><script src="/app.js"></script>
+</body></html>
