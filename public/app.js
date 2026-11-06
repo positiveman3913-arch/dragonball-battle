@@ -4,20 +4,30 @@ const $ = id => document.getElementById(id);
 
 let myId = null;
 let room = null;
-
-const costs = {
-  charge: 0, guard: 0, pa: 1,
-  e: 3, blink: 1, blinkpa: 2, genki: 5
-};
+let myChoice = null;
 
 const names = {
-  charge: "아", guard: "막", pa: "파",
-  e: "에", blink: "순", blinkpa: "순파",
+  charge: "아 (기 모으기)",
+  guard: "막 (방어)",
+  pa: "파",
+  e: "에",
+  blink: "순 (순간이동)",
+  blinkpa: "순파",
   genki: "원기옥"
 };
 
+const costs = {
+  charge: 0,
+  guard: 0,
+  pa: 1,
+  e: 3,
+  blink: 1,
+  blinkpa: 2,
+  genki: 5
+};
+
 // ==========================================
-// SOCKET CONNECTION
+// SOCKET
 // ==========================================
 
 socket.on("connect", () => {
@@ -28,13 +38,18 @@ socket.on("disconnect", () => {
   $("connection").textContent = "연결 끊김";
 });
 
+socket.on("connect_error", err => {
+  $("connection").textContent = "연결 오류";
+  console.error(err);
+});
+
 socket.on("room:update", data => {
   room = data;
   render();
 });
 
 socket.on("game:all-ready", () => {
-  $("status").textContent = "모두 선택 완료!";
+  $("status").textContent = "모두 선택 완료! 결과를 공개하세요.";
 });
 
 socket.on("chat:message", addMessage);
@@ -49,12 +64,12 @@ function emitAck(event, data = {}) {
       if (err) {
         resolve({
           ok: false,
-          error: "서버 응답이 없습니다. 새로고침해 주세요."
+          error: "서버 응답이 없습니다. 페이지를 새로고침해 주세요."
         });
       } else {
         resolve(response || {
           ok: false,
-          error: "서버 응답 오류"
+          error: "서버 응답이 비어 있습니다."
         });
       }
     });
@@ -67,8 +82,10 @@ function emitAck(event, data = {}) {
 
 function enter(data) {
   myId = data.id;
+
   $("entry").classList.add("hidden");
   $("game").classList.remove("hidden");
+
   $("roomCodeLabel").textContent = data.code;
 }
 
@@ -78,15 +95,20 @@ async function createRoom(eventName) {
     character: $("character").value
   });
 
-  if (res.ok) enter(res);
-  else alert(res.error);
+  if (res.ok) {
+    enter(res);
+  } else {
+    alert(res.error || "방 생성 실패");
+  }
 }
 
 $("create").onclick = () => createRoom("room:create");
 
-$("createSolo").onclick = () => {
-  createRoom("room:createSolo");
-};
+const soloButton = $("createSolo");
+
+if (soloButton) {
+  soloButton.onclick = () => createRoom("room:createSolo");
+}
 
 $("join").onclick = async () => {
   const res = await emitAck("room:join", {
@@ -95,7 +117,10 @@ $("join").onclick = async () => {
     character: $("character").value
   });
 
-  if (!res.ok) return alert(res.error);
+  if (!res.ok) {
+    return alert(res.error);
+  }
+
   enter(res);
 };
 
@@ -106,10 +131,14 @@ $("join").onclick = async () => {
 $("copy").onclick = async () => {
   try {
     await navigator.clipboard.writeText(room.code);
-    alert("초대 코드 복사 완료!");
+    $("copy").textContent = "복사 완료!";
   } catch {
     alert("방 코드: " + room.code);
   }
+
+  setTimeout(() => {
+    $("copy").textContent = "초대 코드 복사";
+  }, 1300);
 };
 
 $("start").onclick = async () => {
@@ -122,6 +151,8 @@ $("reveal").onclick = async () => {
   if (!r.ok) alert(r.error);
 };
 
+$("force").onclick = () => $("reveal").click();
+
 $("next").onclick = async () => {
   const r = await emitAck("game:next");
   if (!r.ok) alert(r.error);
@@ -132,57 +163,34 @@ $("restart").onclick = async () => {
   if (!r.ok) alert(r.error);
 };
 
-$("force").onclick = () => $("reveal").click();
-
 // ==========================================
-// CHAT
+// CHOICE
 // ==========================================
 
-$("chatForm").onsubmit = async e => {
-  e.preventDefault();
-
-  const input = $("chatInput");
-  const message = input.value.trim();
-
-  if (!message) return;
-
-  const result = await emitAck("chat:send", { message });
-
-  if (result.ok) {
-    input.value = "";
-  } else {
-    alert(result.error);
-  }
+$("cancelChoice").onclick = () => {
+  myChoice = null;
+  $("selectionText").textContent = "선택하지 않음";
 };
 
-function addMessage(m) {
-  const box = $("messages");
-  box.querySelector(".empty")?.remove();
+$("target").onchange = () => updateChoiceTarget();
 
-  const div = document.createElement("div");
-  div.className = "message";
+function updateChoiceTarget() {
+  if (!myChoice) return;
 
-  const name = document.createElement("strong");
-  name.textContent = m.name;
+  myChoice.targetId = $("target").value;
 
-  const text = document.createElement("p");
-  text.textContent = m.message;
+  const target = room.players.find(
+    p => p.id === myChoice.targetId
+  );
 
-  const time = document.createElement("time");
-  time.textContent = new Date(m.time).toLocaleTimeString("ko-KR");
-
-  div.append(name, time, text);
-  box.append(div);
-  box.scrollTop = box.scrollHeight;
+  $("selectionText").textContent =
+    `${names[myChoice.action]} → ${target?.name || "대상 선택"}`;
 }
 
-// ==========================================
-// BATTLE ACTIONS
-// ==========================================
+document.querySelectorAll("[data-action]").forEach(btn => {
+  btn.onclick = async () => {
+    const action = btn.dataset.action;
 
-document.querySelectorAll("[data-action]").forEach(button => {
-  button.onclick = async () => {
-    const action = button.dataset.action;
     const me = room?.players.find(p => p.id === myId);
 
     if (!me || !me.alive) return;
@@ -197,23 +205,87 @@ document.querySelectorAll("[data-action]").forEach(button => {
       targetId = $("target").value;
 
       if (!targetId) {
-        return alert("공격 대상을 선택하세요.");
+        return alert("공격 대상을 선택해 주세요.");
       }
     }
 
-    const result = await emitAck("game:choose", {
+    const res = await emitAck("game:choose", {
       action,
       targetId
     });
 
-    if (!result.ok) return alert(result.error);
+    if (!res.ok) {
+      return alert(res.error);
+    }
+
+    myChoice = { action, targetId };
 
     $("selectionText").textContent =
-      names[action] + (action === "genki" ? " 발동 대기" : " 선택 완료");
+      action === "genki"
+        ? "☄️ 원기옥 발동 대기"
+        : names[action] +
+          (targetId
+            ? " → " + room.players.find(p => p.id === targetId)?.name
+            : "");
 
-    $("status").textContent = "선택 완료!";
+    $("status").textContent =
+      "선택 완료. 결과 공개를 기다리는 중입니다.";
   };
 });
+
+// ==========================================
+// CHAT
+// ==========================================
+
+$("chatForm").addEventListener("submit", async e => {
+  e.preventDefault();
+
+  const input = $("chatInput");
+  const message = input.value.trim();
+
+  if (!message) return;
+
+  const button = $("chatForm").querySelector("button");
+  button.disabled = true;
+
+  const res = await emitAck("chat:send", { message });
+
+  button.disabled = false;
+
+  if (res.ok) {
+    input.value = "";
+  } else {
+    alert(res.error || "채팅 전송에 실패했습니다.");
+  }
+});
+
+function addMessage(m) {
+  const box = $("messages");
+
+  box.querySelector(".empty")?.remove();
+
+  const div = document.createElement("div");
+  div.className = "message";
+
+  const time = new Date(m.time).toLocaleTimeString("ko-KR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+
+  const strong = document.createElement("strong");
+  strong.textContent = m.name;
+
+  const tm = document.createElement("time");
+  tm.textContent = time;
+
+  const p = document.createElement("p");
+  p.textContent = m.message;
+
+  div.append(strong, tm, p);
+  box.append(div);
+
+  box.scrollTop = box.scrollHeight;
+}
 
 // ==========================================
 // GAME RENDER
@@ -236,25 +308,41 @@ function render() {
 
   room.players.forEach(p => {
     const card = document.createElement("div");
-    card.className = "player" + (!p.alive ? " dead" : "");
 
-    const name = document.createElement("strong");
-    name.textContent =
-      (p.isBot ? "🤖 " : "") +
+    card.className =
+      "player" +
+      (!p.alive ? " dead" : "") +
+      (p.id === room.hostId ? " host" : "");
+
+    const n = document.createElement("strong");
+
+    n.textContent =
       (p.id === room.hostId ? "👑 " : "") +
+      (p.isBot ? "🤖 " : "") +
       p.name;
 
     const meta = document.createElement("div");
     meta.className = "meta";
-    meta.textContent = `기 ${p.ki} · ${p.alive ? "생존" : "아웃"}`;
 
-    card.append(name, meta);
+    meta.textContent =
+      `기 ${p.ki} · ${p.alive ? "생존" : "아웃"}` +
+      (p.ready ? " · 선택 완료" : "");
+
+    card.append(n, meta);
     $("players").append(card);
   });
 
-  $("lobbyActions").classList.toggle("hidden", room.phase !== "lobby");
+  $("lobbyActions").classList.toggle(
+    "hidden",
+    room.phase !== "lobby"
+  );
+
   $("start").classList.toggle("hidden", !host);
-  $("battle").classList.toggle("hidden", room.phase !== "playing");
+
+  $("battle").classList.toggle(
+    "hidden",
+    room.phase !== "playing"
+  );
 
   $("revealPanel").classList.toggle(
     "hidden",
@@ -266,11 +354,22 @@ function render() {
     !host || room.phase !== "playing"
   );
 
+  $("phaseTitle").textContent = ({
+    lobby: "대기실",
+    playing: "전투 진행",
+    reveal: "결과 공개",
+    finished: "게임 종료"
+  })[room.phase];
+
   if (room.phase === "playing" && me) {
     $("kiValue").textContent = `${me.ki} / 5`;
-    $("kiBar").style.width = `${me.ki * 20}%`;
 
-    $("genkiButton").disabled = me.ki < 5 || !me.alive;
+    $("kiBar").style.width =
+      (me.ki / 5 * 100) + "%";
+
+    $("status").textContent = me.alive
+      ? "기술을 선택하세요."
+      : "아웃되었습니다. 관전 중입니다.";
 
     $("target").innerHTML = "";
 
@@ -283,12 +382,16 @@ function render() {
         $("target").append(option);
       });
 
+    $("targetWrap").classList.toggle("hidden", !me.alive);
+    $("target").disabled = !me.alive;
+
     document.querySelectorAll("[data-action]").forEach(button => {
-      button.disabled = !me.alive || me.ki < costs[button.dataset.action];
+      button.disabled =
+        !me.alive || me.ki < costs[button.dataset.action];
     });
   }
 
-  if (["reveal", "finished"].includes(room.phase)) {
+  if (room.phase === "reveal" || room.phase === "finished") {
     $("resultLines").innerHTML = "";
 
     (room.choices?.lines || []).forEach(line => {
@@ -299,149 +402,90 @@ function render() {
     });
 
     if (room.phase === "finished") {
-      const winner = room.players.find(p => p.id === room.winnerId);
+      const winner = room.players.find(
+        p => p.id === room.winnerId
+      );
+
       const div = document.createElement("div");
       div.className = "winner";
+
       div.textContent = winner
         ? `🏆 최종 승리: ${winner.name}`
         : "무승부";
+
       $("resultLines").prepend(div);
     }
 
-    $("next").classList.toggle("hidden", !host || room.phase !== "reveal");
-    $("restart").classList.toggle("hidden", !host || room.phase !== "finished");
+    $("next").classList.toggle(
+      "hidden",
+      !host || room.phase !== "reveal"
+    );
+
+    $("restart").classList.toggle(
+      "hidden",
+      !host || room.phase !== "finished"
+    );
   }
 }
 
 // ==========================================
-// YOUTUBE BGM
-// Video ID: RWQ-jvnzvhM
-// Official YouTube IFrame Player
+// COMPACT LOCAL MP3 BGM
 // ==========================================
 
 (() => {
-  if (window.__youtubeBgmInstalled) return;
-  window.__youtubeBgmInstalled = true;
+  const audio = $("bgmAudio");
+  const toggle = $("bgmToggle");
+  const mute = $("bgmMute");
 
-  let player = null;
-  let playerReady = false;
+  if (!audio || !toggle || !mute) return;
 
-  function createBgmUI() {
-    if (document.getElementById("youtubeBgmControl")) return;
+  audio.volume = 0.35;
+  audio.loop = true;
 
-    const panel = document.createElement("div");
-    panel.id = "youtubeBgmControl";
+  function update() {
+    const playing = !audio.paused;
 
-    panel.innerHTML = `
-      <button id="youtubeBgmToggle" type="button">
-        ▶ BGM 재생
-      </button>
-      <div id="youtubeBgmPlayer"></div>
-    `;
+    toggle.textContent = playing ? "Ⅱ" : "▶";
 
-    panel.style.cssText = `
-      position:fixed;
-      right:15px;
-      bottom:15px;
-      z-index:999999;
-      padding:10px;
-      border-radius:15px;
-      background:rgba(8,15,39,.95);
-      border:1px solid #ffc45d;
-      box-shadow:0 4px 18px rgba(0,0,0,.4);
-      color:white;
-      width:220px;
-    `;
+    toggle.setAttribute(
+      "aria-label",
+      playing ? "배경 음악 일시정지" : "배경 음악 재생"
+    );
 
-    const style = document.createElement("style");
-    style.textContent = `
-      #youtubeBgmToggle {
-        width:100%;
-        border:0;
-        border-radius:20px;
-        padding:10px;
-        background:#ffc45d;
-        color:#151515;
-        font-weight:bold;
-        cursor:pointer;
-      }
+    toggle.title = playing ? "일시정지" : "재생";
 
-      #youtubeBgmPlayer {
-        width:200px;
-        height:113px;
-        margin:10px auto 0;
-        overflow:hidden;
-      }
-    `;
+    mute.textContent = audio.muted ? "×" : "♪";
 
-    document.head.appendChild(style);
-    document.body.appendChild(panel);
+    mute.setAttribute(
+      "aria-label",
+      audio.muted ? "음소거 해제" : "음소거"
+    );
 
-    document.getElementById("youtubeBgmToggle")
-      .addEventListener("click", async () => {
-        if (!playerReady) {
-          alert("유튜브 플레이어를 불러오는 중입니다. 잠시 후 다시 눌러주세요.");
-          return;
-        }
-
-        try {
-          const state = player.getPlayerState();
-
-          if (state === YT.PlayerState.PLAYING) {
-            player.pauseVideo();
-          } else {
-            player.playVideo();
-          }
-        } catch (error) {
-          console.error("YouTube BGM error:", error);
-        }
-      });
+    mute.title = audio.muted ? "음소거 해제" : "음소거";
   }
 
-  function updateButton() {
-    const button = document.getElementById("youtubeBgmToggle");
-    if (!button || !playerReady) return;
-
-    const state = player.getPlayerState();
-
-    button.textContent =
-      state === YT.PlayerState.PLAYING
-        ? "⏸ BGM 일시정지"
-        : "▶ BGM 재생";
-  }
-
-  window.onYouTubeIframeAPIReady = function () {
-    player = new YT.Player("youtubeBgmPlayer", {
-      width: "200",
-      height: "113",
-      videoId: "RWQ-jvnzvhM",
-      playerVars: {
-        autoplay: 0,
-        controls: 1,
-        playsinline: 1,
-        rel: 0
-      },
-      events: {
-        onReady: () => {
-          playerReady = true;
-          updateButton();
-        },
-        onStateChange: updateButton,
-        onError: event => {
-          console.error("YouTube player error:", event.data);
-          alert("이 유튜브 영상은 임베드 재생이 제한되어 있을 수 있습니다.");
-        }
+  toggle.addEventListener("click", async () => {
+    if (audio.paused) {
+      try {
+        await audio.play();
+      } catch (error) {
+        console.warn("BGM 재생 실패:", error);
       }
-    });
-  };
+    } else {
+      audio.pause();
+    }
 
-  createBgmUI();
+    update();
+  });
 
-  if (!window.YT || !window.YT.Player) {
-    const script = document.createElement("script");
-    script.src = "https://www.youtube.com/iframe_api";
-    document.head.appendChild(script);
-  } else {
-    window.onYouTubeIframeAPIReady();
-  }
+  mute.addEventListener("click", () => {
+    audio.muted = !audio.muted;
+    update();
+  });
+
+  audio.addEventListener("play", update);
+  audio.addEventListener("pause", update);
+  audio.addEventListener("volumechange", update);
+
+  update();
 })();
