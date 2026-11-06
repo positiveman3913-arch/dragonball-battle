@@ -7,7 +7,6 @@ const crypto = require("crypto");
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
-
 const PORT = process.env.PORT || 3000;
 
 app.use(express.static("public"));
@@ -19,7 +18,6 @@ const ACTIONS = new Set([
   "blink", "blinkpa", "genki"
 ]);
 
-// 콜백 및 데이터 인자 안전 처리
 function normalizeArgs(data, cb) {
   if (typeof data === "function") {
     return { data: {}, cb: data };
@@ -32,18 +30,14 @@ function normalizeArgs(data, cb) {
 }
 
 function reply(cb, result) {
-  if (typeof cb === "function") {
-    cb(result);
-  }
+  if (typeof cb === "function") cb(result);
 }
 
 function makeCode() {
   let id;
-
   do {
     id = crypto.randomBytes(3).toString("hex").toUpperCase();
   } while (rooms.has(id));
-
   return id;
 }
 
@@ -60,7 +54,8 @@ function makePlayer(id, name, character, isBot = false) {
     alive: true,
     choice: null,
     spectator: false,
-    isBot
+    isBot,
+    eliminatedRound: null
   };
 }
 
@@ -82,7 +77,6 @@ function makeRoom(host) {
   );
 
   rooms.set(room.code, room);
-
   return room;
 }
 
@@ -99,11 +93,8 @@ function addBot(room) {
 
 function findRoom(socket) {
   for (const room of rooms.values()) {
-    if (room.players.has(socket.id)) {
-      return room;
-    }
+    if (room.players.has(socket.id)) return room;
   }
-
   return null;
 }
 
@@ -123,7 +114,8 @@ function publicRoom(room) {
       alive: p.alive,
       ready: !!p.choice,
       spectator: p.spectator,
-      isBot: !!p.isBot
+      isBot: !!p.isBot,
+      eliminatedRound: p.eliminatedRound
     })),
 
     choices: ["reveal", "finished"].includes(room.phase)
@@ -159,7 +151,10 @@ function label(action) {
   }[action] || action;
 }
 
-// BOT 행동
+// ==========================================
+// BOT ACTION
+// ==========================================
+
 function botChoose(room, bot, human) {
   if (bot.ki >= 5 && Math.random() < 0.65) {
     bot.choice = { action: "genki" };
@@ -185,13 +180,32 @@ function botChoose(room, bot, human) {
   }
 }
 
-// 라운드 판정
+// ==========================================
+// ROUND RESOLUTION
+// ==========================================
+
+function makePlayerResult(p, actionMap) {
+  const choice = p.choice;
+
+  return {
+    id: p.id,
+    name: p.name,
+    character: p.character,
+    isBot: !!p.isBot,
+    action: actionMap ? actionMap.get(p.id) : choice?.action || null,
+    targetId: choice?.targetId || null,
+    alive: p.alive,
+    ki: p.ki,
+    eliminatedRound: p.eliminatedRound
+  };
+}
+
 function resolveRound(room) {
   const alive = [...room.players.values()].filter(
     p => p.alive && !p.spectator
   );
 
-  // 원기옥: 모든 상대 즉사
+  // Genki Dama: every opponent is eliminated.
   const genkiUsers = alive.filter(
     p => p.choice?.action === "genki" && p.ki >= 5
   );
@@ -202,17 +216,33 @@ function resolveRound(room) {
     for (const p of alive) {
       if (p.id !== caster.id) {
         p.alive = false;
+        p.eliminatedRound = room.round;
       }
     }
 
+    caster.alive = true;
     room.winnerId = caster.id;
     room.phase = "finished";
 
+    const results = [...room.players.values()].map(p => ({
+      id: p.id,
+      name: p.name,
+      character: p.character,
+      isBot: !!p.isBot,
+      action: p.choice?.action || null,
+      targetId: p.choice?.targetId || null,
+      alive: p.alive,
+      ki: p.ki,
+      eliminatedRound: p.eliminatedRound
+    }));
+
     room.lastSummary = {
       round: room.round,
+      genki: caster.id,
       lines: [
         `${caster.name}의 원기옥 발동! 모든 상대가 탈락했습니다.`
-      ]
+      ],
+      players: results
     };
 
     return;
@@ -273,18 +303,21 @@ function resolveRound(room) {
         survives = own !== "blink";
       }
 
-      if (!survives) {
-        out.add(p.id);
-      }
+      if (!survives) out.add(p.id);
     }
   }
 
+  // Record all actions before clearing choices.
+  const resultPlayers = [];
+
   for (const p of alive) {
+    const action = actions.get(p.id);
+    const targetId = p.choice?.targetId || null;
+
     if (out.has(p.id)) {
       p.alive = false;
+      p.eliminatedRound = room.round;
     }
-
-    const action = actions.get(p.id);
 
     if (action === "charge") p.ki += 1;
     if (["pa", "blink"].includes(action)) p.ki -= 1;
@@ -292,6 +325,19 @@ function resolveRound(room) {
     if (action === "blinkpa") p.ki -= 2;
 
     p.ki = Math.max(0, Math.min(5, p.ki));
+
+    resultPlayers.push({
+      id: p.id,
+      name: p.name,
+      character: p.character,
+      isBot: !!p.isBot,
+      action,
+      targetId,
+      alive: p.alive,
+      ki: p.ki,
+      eliminatedRound: p.eliminatedRound
+    });
+
     p.choice = null;
   }
 
@@ -299,12 +345,15 @@ function resolveRound(room) {
     p => p.alive && !p.spectator
   );
 
+  const lines = resultPlayers.map(p =>
+    `${p.name}: ${label(p.action)}` +
+    (p.alive ? " → 생존" : " → 아웃")
+  );
+
   room.lastSummary = {
     round: room.round,
-    lines: alive.map(p =>
-      `${p.name}: ${label(actions.get(p.id))}` +
-      (out.has(p.id) ? " → 아웃" : " → 생존")
-    )
+    lines,
+    players: resultPlayers
   };
 
   if (remaining.length <= 1) {
@@ -315,9 +364,13 @@ function resolveRound(room) {
   }
 }
 
+// ==========================================
+// SOCKET EVENTS
+// ==========================================
+
 io.on("connection", socket => {
 
-  // 일반 방 생성
+  // Create normal room
   socket.on("room:create", (rawData, rawCb) => {
     const { data, cb } = normalizeArgs(rawData, rawCb);
 
@@ -338,7 +391,7 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // BOT 방 생성
+  // Create BOT room
   socket.on("room:createSolo", (rawData, rawCb) => {
     const { data, cb } = normalizeArgs(rawData, rawCb);
 
@@ -360,7 +413,7 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // 방 입장
+  // Join room
   socket.on("room:join", (rawData, rawCb) => {
     const { data, cb } = normalizeArgs(rawData, rawCb);
 
@@ -402,7 +455,7 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // 게임 시작
+  // Start game
   socket.on("game:start", (rawData, rawCb) => {
     const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
@@ -434,13 +487,14 @@ io.on("connection", socket => {
       p.ki = 1;
       p.alive = true;
       p.choice = null;
+      p.eliminatedRound = null;
     }
 
     reply(cb, { ok: true });
     emitRoom(room);
   });
 
-  // 기술 선택
+  // Choose action
   socket.on("game:choose", (rawData, rawCb) => {
     const { data, cb } = normalizeArgs(rawData, rawCb);
 
@@ -494,7 +548,7 @@ io.on("connection", socket => {
       targetId: data.targetId || null
     };
 
-    // BOT 자동 선택
+    // BOT auto choice
     if (room.solo) {
       const bot = [...room.players.values()].find(
         x => x.isBot && x.alive
@@ -517,7 +571,7 @@ io.on("connection", socket => {
     }
   });
 
-  // 결과 공개
+  // Reveal results
   socket.on("game:reveal", (rawData, rawCb) => {
     const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
@@ -550,12 +604,16 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // 다음 라운드
+  // Next round
   socket.on("game:next", (rawData, rawCb) => {
     const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
 
-    if (!room || room.hostId !== socket.id || room.phase !== "reveal") {
+    if (
+      !room ||
+      room.hostId !== socket.id ||
+      room.phase !== "reveal"
+    ) {
       return reply(cb, {
         ok: false,
         error: "다음 라운드로 진행할 수 없습니다."
@@ -574,7 +632,7 @@ io.on("connection", socket => {
     emitRoom(room);
   });
 
-  // 재시작
+  // Restart
   socket.on("game:restart", (rawData, rawCb) => {
     const { cb } = normalizeArgs(rawData, rawCb);
     const room = findRoom(socket);
@@ -596,13 +654,14 @@ io.on("connection", socket => {
       p.alive = true;
       p.choice = null;
       p.spectator = false;
+      p.eliminatedRound = null;
     }
 
     reply(cb, { ok: true });
     emitRoom(room);
   });
 
-  // 실시간 채팅
+  // Chat
   socket.on("chat:send", (rawData, rawCb) => {
     const { data, cb } = normalizeArgs(rawData, rawCb);
 
@@ -627,10 +686,9 @@ io.on("connection", socket => {
     reply(cb, { ok: true });
   });
 
-  // 연결 종료
+  // Disconnect
   socket.on("disconnect", () => {
     const room = findRoom(socket);
-
     if (!room) return;
 
     room.players.delete(socket.id);
